@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# SLURM job report from sacct
+# The Advanced Research Computing at Hopkins (ARCH)
+# Ricardo S Jacomini < rdesouz4 @ jhu.edu >
+# Date: Feb, 11 2025
+
+"""
+This script generates a report of SLURM account and usage details.
+
+Functions:
+    get_current_quarter_dates() -> tuple:
+        Returns the start and end dates of the current quarter.
+
+    get_user() -> str:
+        Returns the current logged-in user.
+
+    slurm_command(command: str) -> str:
+        Executes a SLURM command and returns the output.
+
+    get_allocation(account: str) -> str:
+        Retrieves the allocation for a given account.
+
+    get_accounts(user: str, PI: bool = False) -> dict:
+        Retrieves the accounts associated with a user or PI.
+
+    AccountUtilization(account: str, start_date: str, end_date: str) -> list:
+        Retrieves the account utilization data for a given account and date range.
+
+    format_output(usage_data: dict, allocation: float, account: str, used: float, usage: float, usage_column: bool, space: int) -> list:
+        Formats the output for the report.
+
+    account_data(accounts: dict, hide_zero: bool, start_date: str, end_date: str, usage_column: bool):
+        Generates and prints the account usage report.
+
+    main():
+        Parses command-line arguments and generates the report.
+"""
+
+import subprocess
+import argparse
+import os
+import re
+from datetime import datetime, date
+
+def get_current_quarter_dates():
+    """
+    Get the start and end dates of the current quarter.
+
+    Returns:
+        tuple: Start and end dates of the current quarter in 'YYYY-MM-DD' format.
+    """
+    today = datetime.today()
+    current_year = today.year
+    current_month = today.month
+
+    if current_month in [1, 2, 3]:
+        start_date = date(current_year, 1, 1)
+        end_date = date(current_year, 3, 31)
+    elif current_month in [4, 5, 6]:
+        start_date = date(current_year, 4, 1)
+        end_date = date(current_year, 6, 30)
+    elif current_month in [7, 8, 9]:
+        start_date = date(current_year, 7, 1)
+        end_date = date(current_year, 9, 30)
+    else:
+        start_date = date(current_year, 10, 1)
+        end_date = date(current_year, 12, 31)
+
+    return start_date.strftime("%Y-%m-%d") , end_date.strftime("%Y-%m-%d")
+
+def get_user():
+    """
+    Get the current user.
+
+    Returns:
+        str: The username of the current user.
+    """
+    try:
+        return os.getlogin()
+    except OSError:
+        return os.environ.get("USER", "unknown_user")
+
+def slurm_command( command ):
+    """
+    Generic interface to execute a SLURM command.
+
+    Args:
+    command (str): The SLURM command to execute.
+
+    Returns:
+    str: The output of the command.
+
+    Raises:
+    ValueError: If the command is not specified.
+    subprocess.CalledProcessError: If the command execution fails.
+    """
+    if not command:
+        raise ValueError("Error: You need to specify the command (e.g., 'sacctmgr' or 'sreport')")
+
+    result = subprocess.run(
+        ["bash", "-c", command],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        universal_newlines=True, check=True
+    )
+
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, command)
+
+    return result.stdout
+
+def get_allocation(account):
+    """
+    Retrieves the allocation for a given account.
+
+    Args:
+        account (str): The account name.
+
+    Returns:
+        str: The allocation for the account.
+    """
+    try:
+        cmd = f"sacctmgr show -Ps account {account} format=Account,Share | tail -n +2 | head -n 1"
+        result = slurm_command(cmd).split("|")[1].strip()
+        return result
+    except subprocess.CalledProcessError as e:
+        print(f"Error retrieving share: {e}")
+        return ""
+
+def get_accounts(user, PI=False):
+    """
+    Retrieves the accounts associated with a user or PI.
+
+    Args:
+        user (str): The username.
+        PI (bool): Whether to retrieve accounts for a PI. Default is False.
+
+    Returns:
+        dict: A dictionary of accounts and associated users.
+    """
+    try:
+        if PI:
+            # awk to filter out lines where the second column is empty.
+            cmd = f"sacctmgr -p list associations format=Account,User | grep '^{user}' | awk -F'|' '$2!=\"\"'"
+        else:
+            cmd = f"sacctmgr show -Ps user {user} format=Account,User | tail -n +2"
+
+        result = slurm_command(cmd).splitlines()
+        accounts = [line.split("|") for line in result]
+
+        from itertools import groupby
+        from operator import itemgetter
+
+        # Use map + lambda to update third column
+        updated_data = list(map(lambda row: [row[0], row[1], 0], accounts))
+
+        accounts_dict = {key: list(map(lambda x: (x[1], x[2]), group))
+                         for key, group in groupby(updated_data, key=itemgetter(0))}
+
+        return accounts_dict
+    except subprocess.CalledProcessError as e:
+        print(f"Error retrieving accounts for user {user}: {e}")
+        return []
+
+def AccountUtilization(account, start_date, end_date):
+    """
+    Retrieves the account utilization data for a given account and date range.
+
+    Args:
+        account (str): The account name.
+        start_date (str): The start date in YYYY-MM-DD format.
+        end_date (str): The end date in YYYY-MM-DD format.
+
+    Returns:
+        list: The account utilization data.
+    """
+    cmd = f"sreport cluster AccountUtilizationByUser ALL_Clusters account={account} start={start_date} end={end_date} format=Account,Login,Used -T Billing --parsable2"
+
+    lines = slurm_command(cmd).strip().split("\n")
+
+    # Find the header position
+    for i, line in enumerate(lines):
+        if "Account|Login|Used" in line:
+            header_index = i
+            break
+
+    # Print or process relevant lines
+    utilization = lines[header_index:]  # Get only the needed lines
+
+    return utilization
+
+def format_output( usage_data, allocation, account, used, usage, usage_column, space ):
+    """
+    Formats the output for the report.
+
+    Args:
+        usage_data (dict): The usage data.
+        allocation (float): The allocation for the account.
+        account (str): The account name.
+        used (float): The used core-hours.
+        usage (float): The usage percentage.
+        usage_column (bool): Whether to show the usage column.
+        space (int): The space for formatting.
+
+    Returns:
+        list: The formatted output lines.
+    """
+    output = []
+
+    if usage_column:
+        output.append(f"{account:>22}\t{used:>14.1f} / {allocation:>10.1f}\t{usage:>18.1f}")
+    else:
+        output.append(f"{account:>22}\t{used:>14.1f} / {allocation:>10.1f}")
+
+    output.append("." * space)
+
+    for user, data in usage_data.items():
+        if usage_column:
+            output.append(f"{'':>22}\t{data['User']:>14} \t {data['Used']:>14.1f}\t{'':>6}\t{data['Usage(%)'] :>10.1f}")
+        else:
+            output.append(f"{'':>22}\t{data['User']:>14} \t {data['Used']:>14.1f}\t{'':>6}")
+
+    return output
+
+def account_data(accounts, hide_zero, start_date, end_date, usage_column):
+    """
+    Generates and prints the account usage report.
+
+    Args:
+        accounts (dict): The accounts and associated users.
+        hide_zero (bool): Whether to hide users with 0.0 used core-hours.
+        start_date (str): The start date in YYYY-MM-DD format.
+        end_date (str): The end date in YYYY-MM-DD format.
+        usage_column (bool): Whether to show the usage column.
+    """
+    print(f"The time of this report is: {datetime.now().strftime('%a %b %d %H:%M:%S %Z %Y')}\n")
+
+    print(f'Start Date: {start_date} End Date: {end_date}')
+
+    print(f"{'':>25} {'Used':>20} {'Account':>16}")
+    space = int(68)
+    if usage_column:
+       print(f"{'Account':>22}  {'User':>10} {'(core-hours)':>14} / {'Allocated':>12} {'Usage(%)':>10}")
+       space += 7
+    else:
+       print(f"{'Account':>22}  {'User':>10} {'(core-hours)':>14} / {'Allocated':>12} ) ")
+    print("=" * space)
+
+    for account, users in accounts.items():
+        utilization = AccountUtilization( account,  start_date, end_date )
+        usage_data = {}  # Dictionary to store unique users and their usage data
+
+        sreport_dict = {}
+        for line in utilization[2:]:  # Skip header and total account utilization
+            parts = line.split('|')
+            if len(parts) == 3:
+                account, login, used = parts
+                if login and used.isdigit():  # Ensure valid data
+                    sreport_dict[(account, login)] = float(used)
+
+        # Update user_data with computations based on sreport data
+        used_total = 0.0
+        usage_total = 0.0
+
+        allocation = float(get_allocation(account))  # Fetch allocation for account
+
+        for user, _ in users:
+            used = sreport_dict.get((account, user), 0)  / 60 # Fetch used hours from sreport
+
+            if user not in usage_data:
+                usage_data[user] = {
+                    "User": user,
+                    "Used": used,
+                    "Usage(%)": ((used * 100) / allocation) if allocation > 0 else 0.0,
+                }
+            used_total += used
+
+        usage_total = (used_total / allocation) if allocation > 0 else 0.0
+
+        if hide_zero:
+            usage_data = {k: v for k, v in usage_data.items() if v["Used"] > 0.0}
+
+        formatted_output = format_output(usage_data, allocation, account, used_total, usage_total * 100, usage_column, space  )
+
+        for line in formatted_output:
+             print(line)
+        print("\n")
+            #print("." * 77)
+
+def main():
+    """
+    Parses command-line arguments and generates the report.
+    """
+    # TODO: Add options for group and list
+    # parser.add_argument("-g", "--group", action="store_true", help="Display all users' usages of the user's accounts")
+    # parser.add_argument("-l", "--list", type=str, help="Display only the usage of specified user accounts (comma-separated)")
+    parser = argparse.ArgumentParser(description="Display SLURM account and usage details.")
+    parser.add_argument("-u", "--user", type=str, help="Specify a user to check usage")
+    parser.add_argument("-p", "--pi", type=str, help="Specify a PI to check usage")
+    parser.add_argument("--hide-zero", action="store_true", help="Hide users with 0.0 used core-hours")
+    parser.add_argument("--start-date", type=str, help="Specify the start date (YYYY-MM-DD)")
+    parser.add_argument("--end-date", type=str, help="Specify the end date (YYYY-MM-DD)")
+    parser.add_argument("--usage", default=False, action="store_true", help="Show a column of usage data as a percentage of the allocation")
+
+    args = parser.parse_args()
+
+    if args.pi:
+        accounts = get_accounts(args.pi, True)
+    elif args.user:
+        user = args.user
+        accounts = get_accounts(user)
+    else:
+        user = get_user()
+        accounts = get_accounts(user)
+
+    if args.start_date and args.end_date:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00")
+        end_date = datetime.strptime(args.end_date, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00")
+    if args.start_date and not args.end_date:
+        start_date = datetime.strptime(args.start_date, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00")
+        end_date = datetime.today().strftime("%Y-%m-%dT%H:%M:%S")
+    if not args.start_date and not args.end_date:
+        start_date, end_date = get_current_quarter_dates()
+
+        start_date = datetime.strptime(start_date, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00")
+        end_date = datetime.strptime(end_date, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00")  # Fixed assignment
+
+    account_data(accounts, args.hide_zero, start_date, end_date, args.usage)
+
+if __name__ == "__main__":
+    main()
