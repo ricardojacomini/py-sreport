@@ -2,10 +2,6 @@
 
 # SLURM Job Report
 
-This script generates a detailed report on account and resource usage, serving as a wrapper interface to the sreport command. Sreport retrieves information from Slurm's accounting and scheduling databases, which are stored on disk and periodically updated by the Slurm controller.
-
-**Note**: This script is open-source and can be freely used and modified. If you have suggestions or feedback, we welcome them and look forward to incorporating your improvements.
-
 ## Table of Contents
 
 - [Description](#description)
@@ -18,7 +14,10 @@ This script generates a detailed report on account and resource usage, serving a
 
 ## Description
 
-The `py-sreport` script is designed to generate a detailed report of SLURM account and usage details. It retrieves data from SLURM using various commands and formats the output for easy reading.
+The py-sreport script generates a detailed report on SLURM account and resource usage. It retrieves data from SLURM's accounting system using various commands and formats the output for readability. Acting as a wrapper for the sreport command, it provides a user-friendly interface to access scheduler database records, which are stored on disk and periodically updated by the SLURM controller.
+
+**Note**: This open-source script can be freely used and modified. We welcome your suggestions or feedback and look forward to incorporating your improvements.
+
 
 ## Installation
 
