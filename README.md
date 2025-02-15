@@ -87,4 +87,4 @@ To generate a report with a specific date range:
 ./py-sreport --start-date 2025-01-15 --end-date 2025-02-31
 ```
 
-**Note**: For optimal use of py-report, it is recommended to add the directory containing the script to your system's PATH. This will allow you to run the script from anywhere, without having to specify the full path. Once you've added the directory to your PATH, you can run the script simply by typing py-report in your terminal or command prompt.
+**Note**: For optimal use of `py-sreport`, adding the directory containing the script to your system's PATH is recommended. This will allow you to run the script from anywhere without having to specify the full path. Once you've added the directory to your PATH, you can run the script simply by typing `py-sreport` in your terminal or command prompt.
