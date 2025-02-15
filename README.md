@@ -14,7 +14,7 @@ This script generates a detailed report on account and resource usage, serving a
 - [Options](#options)
 - [Functions](#functions)
 - [Examples](#examples)
-- [License](#license)
+- [License](https://github.com/ricardojacomini/py-sreport?tab=GPL-2.0-1-ov-file)
 
 ## Description
 
@@ -40,6 +40,7 @@ The `py-sreport` script is designed to generate a detailed report of SLURM accou
 To run the script, use the following command:
 ```sh
 ./py-sreport [options]
+```
 
 ## Options
 
@@ -70,14 +71,20 @@ To run the script, use the following command:
 To generate a report for a specific user:
 ```sh
 ./py-sreport -u username
+```
 
 To generate a report for a PI:
 ```sh
 ./py-sreport -p pi_name
+```
 
 To generate a report with hidden zero usage:
 ```sh
 ./py-sreport --hide-zero
+```
 
 To generate a report with a specific date range:
+```sh
 ./py-sreport --start-date 2025-01-15 --end-date 2025-02-31
+```
+
