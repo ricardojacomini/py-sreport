@@ -248,6 +248,10 @@ def account_data(accounts, hide_zero, start_date, end_date, usage_column):
     print("=" * space)
 
     for account, users in accounts.items():
+
+        if account == "root":
+           continue  # Skip "root" and continue to the next iteration
+
         utilization = AccountUtilization( account,  start_date, end_date )
         usage_data = {}  # Dictionary to store unique users and their usage data
 
