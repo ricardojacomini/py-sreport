@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Python script to compute Service Units (SU) for a given SLURM job ID
+# The Advanced Research Computing at Hopkins (ARCH)
+# Ricardo S Jacomini < rdesouz4 @ jhu.edu >
+# Date: Feb, 20 2025
+
+import subprocess
+import sys
+import re
+
+def run_command(command):
+    """Run a shell command and return the output."""
+    try:
+        return subprocess.check_output(command, shell=True, stderr=subprocess.DEVNULL, text=True).strip()
+    except subprocess.CalledProcessError:
+        return None
+
+def get_partition(job_id):
+    """Retrieve the partition for a given job ID."""
+    command = f"sacct -P -n -a --format Partition -j {job_id} | head -n 1"
+    return run_command(command)
+
+def get_billing_weights(partition):
+    """Retrieve billing weights for the given partition."""
+    command = f"scontrol show partition {partition} | grep 'TRESBillingWeights'"
+    output = run_command(command)
+
+    if not output:
+        return None, None, None
+
+    match = re.search(r"CPU=(\d+),Mem=([\d\.]+)G,GRES/gpu=(\d+)", output)
+    if match:
+        return int(match.group(1)), float(match.group(2)), int(match.group(3))
+
+    return None, None, None
+
+def get_job_info(job_id):
+    """Retrieve job details including allocated CPUs, requested memory, elapsed time, and job state."""
+    command = f"sacct -P -n -a --format AllocCPUS,REQMEM,Elapsed,State -j {job_id} | head -n 1"
+    output = run_command(command)
+
+    if not output:
+        return None, None, None, None
+
+    fields = output.split('|')
+    alloc_cpus = int(fields[0]) if fields[0] else 0
+    req_mem_gb = float(fields[1].replace('G', '')) if fields[1] else 0
+    elapsed_time = fields[2]
+    state = fields[3]
+
+    return alloc_cpus, req_mem_gb, elapsed_time, state
+
+def convert_time_to_hours(elapsed_time):
+    """Convert elapsed time from HH:MM:SS format to total hours."""
+    try:
+        hh, mm, ss = map(int, elapsed_time.split(':'))
+        return hh + (mm / 60) + (ss / 3600)
+    except ValueError:
+        return 0
+
+def get_gpu_count(job_id, gpu_weight):
+    """Retrieve GPU count using scontrol, but only if GPU billing applies."""
+    if gpu_weight == 0:
+        return 0  # No GPU billing, no need to check
+
+    command = f"scontrol show job {job_id} | grep TresPerNode"
+    output = run_command(command)
+
+    if output:
+        match = re.search(r"gres/gpu=(\d+)", output)
+        if match:
+            return int(match.group(1))
+
+    return 0  # Default to 0 if no GPU count is found
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python compute_su.py <JobID>")
+        sys.exit(1)
+
+    job_id = sys.argv[1]
+    partition = get_partition(job_id)
+
+    if not partition:
+        print(f"Error: Unable to determine partition for Job ID {job_id}")
+        sys.exit(1)
+
+    cpu_weight, mem_weight, gpu_weight = get_billing_weights(partition)
+
+    if cpu_weight is None or mem_weight is None or gpu_weight is None:
+        print(f"Error: No billing weights found for partition {partition}")
+        sys.exit(1)
+
+    alloc_cpus, req_mem_gb, elapsed_time, state = get_job_info(job_id)
+
+    if alloc_cpus is None or req_mem_gb is None or elapsed_time is None or state is None:
+        print(f"Error: Unable to retrieve job info for Job ID {job_id}")
+        sys.exit(1)
+
+    total_hours = convert_time_to_hours(elapsed_time)
+    
+    # Get GPU count only if GPU billing is enabled
+    gpu_count = get_gpu_count(job_id, gpu_weight)
+
+    # Compute individual contributions to SU per hour
+    su_cpu = alloc_cpus * cpu_weight
+    su_mem = req_mem_gb * mem_weight
+    su_gpu = gpu_count * gpu_weight
+
+    # Compute SU per hour and total SU
+    su_per_hour = su_cpu + su_mem + su_gpu
+    total_su = su_per_hour * total_hours
+
+    # Determine which resource contributes the most to SU per hour
+    highest_contributor, highest_value = max(
+        [("CPU", su_cpu), ("Memory", su_mem), ("GPU", su_gpu)],
+        key=lambda x: x[1]
+    )
+
+    # Print results
+    print(f"Job ID: {job_id} - Partition: {partition}")
+    print(f"State: {state}")  # Added Job State
+    print(f"Billing Weights: CPU={cpu_weight}, Mem={mem_weight}, GPU={gpu_weight}")
+    print(f"Allocated CPUs: {alloc_cpus}")
+    print(f"Requested Memory: {req_mem_gb} GB")
+    print(f"Elapsed Time: {total_hours:.2f} hours")
+    print(f"GPU Count: {gpu_count}")
+    print(f"SU per Hour: {su_per_hour:.2f}")
+    print(f"  - CPU SU: {su_cpu:.2f}")
+    print(f"  - Memory SU: {su_mem:.2f}")
+    print(f"  - GPU SU: {su_gpu:.2f}")
+    print(f"Total SU: {total_su:.2f}")
+    print(f"Highest Contributor to SU: {highest_contributor}, {highest_value:.2f}")
+
+if __name__ == "__main__":
+    main()
+
